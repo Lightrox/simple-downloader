@@ -30,7 +30,6 @@ public class App {
                 System.out.println("Announced to tracker successfully");
             } catch (Exception e) {
                 System.out.println("Tracker announce note: " + e.getMessage());
-                e.printStackTrace();
                 // continue anyway — we still want to listen
             }
 
@@ -46,7 +45,6 @@ public class App {
                         handleIncomingHandshake(socket, infoHash, peerId);
                     } catch (Exception e) {
                         System.out.println("Handshake error: " + e.getMessage());
-                        e.printStackTrace();
                     }
                 }).start();
             }
@@ -61,7 +59,6 @@ public class App {
                 peers = tracker.getPeers();
             } catch (Exception e) {
                 System.out.println("Tracker error: " + e.getMessage());
-                e.printStackTrace();
             }
             if (!peers.isEmpty()) {
                 System.out.println("Got " + peers.size() + " peers on attempt " + attempt);

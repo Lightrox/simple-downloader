@@ -1,13 +1,12 @@
 import java.io.*;
 import java.nio.file.Files;
 import java.security.*;
-import java.net.*;
 
 public class ExtractInfoHash {
     public static void main(String[] args) throws Exception {
         // read the .torrent file
         File torrentFile = new File(
-            "c:\\Users\\Harsh\\Documents\\bit-torrent-client\\torrents\\forza.torrent"
+            "c:\\Users\\Harsh\\Documents\\bit-torrent-client\\torrents\\ubuntu.torrent"
         );
         
         byte[] torrentBytes = Files.readAllBytes(torrentFile.toPath());

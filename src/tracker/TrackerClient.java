@@ -29,13 +29,14 @@ public class TrackerClient {
                 + "&port=" + port
                 + "&uploaded=0"
                 + "&downloaded=0"
-                + "&left=0"
+                + "&left=999999999"
                 + "&compact=1"
+                + "&numwant=50"
                 + "&event=started";
 
         System.out.println("Contacting tracker: " + announceUrl);
 
-        URL url = new URL(urlString);
+        URL url = URI.create(urlString).toURL();
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod("GET");
         connection.setConnectTimeout(5000);

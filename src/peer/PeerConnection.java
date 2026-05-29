@@ -58,14 +58,6 @@ public class PeerConnection {
     }
 
     private boolean performHandshake() throws Exception {
-        // BitTorrent handshake format:
-        // 1 byte   — length of protocol string (always 19)
-        // 19 bytes — "BitTorrent protocol"
-        // 8 bytes  — reserved bytes (all zeros)
-        // 20 bytes — info hash
-        // 20 bytes — peer id
-        // total: 68 bytes
-
         byte[] protocolName = "BitTorrent protocol".getBytes("UTF-8");
 
         ByteArrayOutputStream handshake = new ByteArrayOutputStream();
@@ -80,7 +72,6 @@ public class PeerConnection {
 
         System.out.println("Handshake sent — waiting for response...");
 
-        // read peer's handshake response
         int pstrLen = in.readByte() & 0xFF;
         if (pstrLen != 19) {
             System.out.println("Invalid handshake — wrong protocol length: " + pstrLen);
@@ -107,6 +98,33 @@ public class PeerConnection {
         System.out.println("Handshake successful!");
         System.out.println("Peer ID: " + new String(receivedPeerId, "UTF-8"));
         return true;
+    }
+
+    public byte[] requestPiece(int pieceIndex, int pieceSize) throws Exception {
+        out.writeInt(13);
+        out.writeByte(6);
+        out.writeInt(pieceIndex);
+        out.writeInt(0);
+        out.writeInt(pieceSize);
+        out.flush();
+
+        int messageLength = in.readInt();
+        int messageId = in.readByte() & 0xFF;
+
+        if (messageId != 7) {
+            throw new Exception("Expected piece message (7) but got: " + messageId);
+        }
+
+        int receivedIndex = in.readInt();
+        in.readInt();
+        int dataLength = messageLength - 9;
+
+        byte[] pieceData = new byte[dataLength];
+        in.readFully(pieceData);
+
+        System.out.println("Received piece " + receivedIndex
+            + " — " + dataLength + " bytes");
+        return pieceData;
     }
 
     public void close() {

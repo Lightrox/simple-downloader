@@ -1,113 +1,145 @@
 import tracker.TrackerClient;
 import tracker.PeerInfo;
 import peer.PeerConnection;
+import peer.PeerManager;
+import download.PieceManager;
+import download.FileWriter;
 import java.util.List;
 import java.util.ArrayList;
 import java.net.*;
 import java.io.*;
 
 public class App {
+
+    static final String INFO_HASH_ENCODED = 
+        "%45%5A%D4%8C%E8%CD%08%15%6D%F3%6F%31%5B%42%B1%AC%3A%71%82%45";
+    static final String TRACKER_URL = "http://localhost:8080/announce";
+    static final int PIECE_SIZE = 512 * 1024; // 512KB
+
     public static void main(String[] args) throws Exception {
 
         int port = args.length > 0 ? Integer.parseInt(args[0]) : 6881;
-        System.out.println("Starting client on port: " + port);
+        String mode = args.length > 1 ? args[1] : "leecher";
+        System.out.println("Starting client on port: " + port + " mode: " + mode);
 
-        String infoHashEncoded = "%45%5A%D4%8C%E8%CD%08%15%6D%F3%6F%31%5B%42%B1%AC%3A%71%82%45";
-        byte[] infoHash = urlDecodeToBytes(infoHashEncoded);
+        byte[] infoHash = urlDecodeToBytes(INFO_HASH_ENCODED);
         String peerIdStr = "-BT0001-" + String.format("%012d",
             new java.util.Random().nextInt(1000000000));
         byte[] peerId = peerIdStr.getBytes("UTF-8");
 
-        TrackerClient tracker = new TrackerClient(
-            "http://localhost:8080/announce", infoHashEncoded, port);
+        TrackerClient tracker = new TrackerClient(TRACKER_URL, INFO_HASH_ENCODED, port);
 
-        // if seeder — announce and listen for incoming connections
-        if (port == 6882) {
-            System.out.println("Running as seeder — announcing and listening...");
+        // SEEDER MODE
+        if (mode.equals("seeder")) {
+            System.out.println("Running as seeder...");
 
             try {
-                tracker.getPeers(); // announce to tracker, ignore response
-                System.out.println("Announced to tracker successfully");
+                tracker.getPeers();
+                System.out.println("Announced to tracker");
             } catch (Exception e) {
-                System.out.println("Tracker announce note: " + e.getMessage());
-                e.printStackTrace();
-                // continue anyway — we still want to listen
+                System.out.println("Tracker note: " + e.getMessage());
             }
 
-            ServerSocket serverSocket = new ServerSocket(6882);
-            System.out.println("Seeder listening on port 6882...");
+            // load file to serve
+            File fileToServe = new File(
+                "c:\\Users\\Harsh\\Documents\\bit-torrent-client\\test-files\\sample.pdf");
+            byte[] fileData = java.nio.file.Files.readAllBytes(fileToServe.toPath());
+            System.out.println("Serving file: " + fileToServe.getName() 
+                + " (" + fileData.length + " bytes)");
+
+            // split into pieces
+            int totalPieces = (int) Math.ceil((double) fileData.length / PIECE_SIZE);
+            byte[][] pieces = new byte[totalPieces][];
+            for (int i = 0; i < totalPieces; i++) {
+                int start = i * PIECE_SIZE;
+                int end = Math.min(start + PIECE_SIZE, fileData.length);
+                pieces[i] = new byte[end - start];
+                System.arraycopy(fileData, start, pieces[i], 0, pieces[i].length);
+            }
+            System.out.println("File split into " + totalPieces + " pieces");
+
+            // listen for incoming connections
+            ServerSocket serverSocket = new ServerSocket(port);
+            System.out.println("Seeder listening on port " + port + "...");
 
             while (true) {
                 Socket socket = serverSocket.accept();
-                System.out.println("Incoming connection from: "
-                        + socket.getInetAddress().getHostAddress());
+                System.out.println("Peer connected: " 
+                    + socket.getInetAddress().getHostAddress());
+                final Socket s = socket;
                 new Thread(() -> {
                     try {
-                        handleIncomingHandshake(socket, infoHash, peerId);
+                        handlePeer(s, infoHash, peerId, pieces, totalPieces);
                     } catch (Exception e) {
-                        System.out.println("Handshake error: " + e.getMessage());
-                        e.printStackTrace();
+                        System.out.println("Peer error: " + e.getMessage());
                     }
                 }).start();
             }
         }
 
-        // if leecher — find peers and connect
-        System.out.println("Running as leecher — looking for peers...");
-        List<PeerInfo> peers = new ArrayList<>();
+        // LEECHER MODE
+        System.out.println("Running as leecher...");
 
+        // get peers from tracker
+        List<PeerInfo> peers = new ArrayList<>();
         for (int attempt = 1; attempt <= 5; attempt++) {
             try {
                 peers = tracker.getPeers();
             } catch (Exception e) {
                 System.out.println("Tracker error: " + e.getMessage());
-                e.printStackTrace();
             }
             if (!peers.isEmpty()) {
-                System.out.println("Got " + peers.size() + " peers on attempt " + attempt);
+                System.out.println("Got " + peers.size() + " peers");
                 break;
             }
-            System.out.println("No peers yet, retrying in 2 seconds... (" + attempt + "/5)");
+            System.out.println("No peers yet, retrying... (" + attempt + "/5)");
             Thread.sleep(2000);
         }
 
         if (peers.isEmpty()) {
-            System.out.println("No peers found after 5 attempts");
+            System.out.println("No peers found");
             return;
         }
 
-        for (PeerInfo peer : peers) {
-            System.out.println("Trying peer: " + peer);
-            PeerConnection connection = new PeerConnection(peer, infoHash, peerId, port);
-            boolean success = connection.connect();
+        // get file size from seeder first
+        // for now hardcode — week 6 will read from .torrent file
+        File sourceFile = new File(
+            "c:\\Users\\Harsh\\Documents\\bit-torrent-client\\test-files\\sample.pdf");
+        long fileSize = sourceFile.length();
+        int totalPieces = (int) Math.ceil((double) fileSize / PIECE_SIZE);
 
-            if (success) {
-                System.out.println("Successfully handshaked with: " + peer);
-                connection.close();
-                break;
-            } else {
-                System.out.println("Peer " + peer + " failed, trying next...");
-            }
-        }
+        System.out.println("File size: " + fileSize + " bytes");
+        System.out.println("Total pieces: " + totalPieces);
+
+        // set up download components
+        PieceManager pieceManager = new PieceManager(
+            totalPieces, PIECE_SIZE, fileSize, null); // null hashes for now
+
+        FileWriter fileWriter = new FileWriter(
+            "c:\\Users\\Harsh\\Documents\\bit-torrent-client\\received\\downloaded.pdf",
+            fileSize, PIECE_SIZE);
+
+        // start parallel download
+        PeerManager peerManager = new PeerManager(
+            peers, pieceManager, fileWriter, infoHash, peerId, port);
+        peerManager.startDownload();
+
+        System.out.println("Done! Check received/downloaded.pdf");
     }
 
-    private static void handleIncomingHandshake(Socket socket,
-            byte[] infoHash, byte[] peerId) throws Exception {
+    private static void handlePeer(Socket socket, byte[] infoHash,
+            byte[] peerId, byte[][] pieces, int totalPieces) throws Exception {
+
         DataInputStream in = new DataInputStream(socket.getInputStream());
         DataOutputStream out = new DataOutputStream(socket.getOutputStream());
 
-        // read incoming handshake
+        // complete handshake
         int pstrLen = in.readByte() & 0xFF;
         byte[] pstr = new byte[pstrLen];
         in.readFully(pstr);
-        byte[] reserved = new byte[8];
-        in.readFully(reserved);
-        byte[] receivedInfoHash = new byte[20];
-        in.readFully(receivedInfoHash);
-        byte[] receivedPeerId = new byte[20];
-        in.readFully(receivedPeerId);
-
-        System.out.println("Received handshake from peer!");
+        in.readFully(new byte[8]); // reserved
+        in.readFully(new byte[20]); // info hash
+        in.readFully(new byte[20]); // peer id
 
         // send handshake back
         ByteArrayOutputStream handshake = new ByteArrayOutputStream();
@@ -118,9 +150,42 @@ public class App {
         handshake.write(peerId);
         out.write(handshake.toByteArray());
         out.flush();
+        System.out.println("Handshake completed");
 
-        System.out.println("Handshake completed with leecher!");
-        socket.close();
+        // serve piece requests
+        // serve piece requests
+        try {
+            while (true) {
+                int messageLength = in.readInt();
+                if (messageLength == 0) continue;
+
+                int messageId = in.readByte() & 0xFF;
+
+                if (messageId == 6) {
+                    int pieceIndex = in.readInt();
+                    int blockOffset = in.readInt();
+                    int blockLength = in.readInt();
+
+                    System.out.println("Serving piece " + pieceIndex);
+
+                    byte[] pieceData = pieces[pieceIndex];
+
+                    out.writeInt(9 + pieceData.length);
+                    out.writeByte(7);
+                    out.writeInt(pieceIndex);
+                    out.writeInt(blockOffset);
+                    out.write(pieceData);
+                    out.flush();
+
+                    System.out.println("Sent piece " + pieceIndex
+                        + " (" + pieceData.length + " bytes)");
+                }
+            }
+        } catch (EOFException e) {
+            System.out.println("Peer disconnected cleanly");
+        } catch (Exception e) {
+            System.out.println("Peer disconnected: " + e.getMessage());
+        }
     }
 
     private static byte[] urlDecodeToBytes(String encoded) throws Exception {
